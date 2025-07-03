@@ -17,7 +17,7 @@ fn pooling[
     layout: Layout
 ](
     output: LayoutTensor[mut=True, dtype, layout],
-    a: LayoutTensor[mut=True, dtype, layout],
+    a: LayoutTensor[mut=False, dtype, layout],
     size: Int,
 ):
     # Allocate shared memory using tensor builder
@@ -25,7 +25,19 @@ fn pooling[
 
     global_i = block_dim.x * block_idx.x + thread_idx.x
     local_i = thread_idx.x
-    # FIX ME IN (roughly 10 lines)
+    
+    if global_i < size:
+        shared[local_i] = a[global_i]
+
+    barrier()
+
+    if global_i == 0:
+        output[global_i] = shared[0]
+    elif global_i == 1:
+        output[global_i] = shared[0] + shared[1]
+    elif global_i < size:
+        output[global_i] = shared[local_i] + shared[local_i - 1] + shared[local_i - 2]
+
 
 
 # ANCHOR_END: pooling_layout_tensor
