@@ -25,7 +25,14 @@ fn naive_matmul[
 ):
     row = block_dim.y * block_idx.y + thread_idx.y
     col = block_dim.x * block_idx.x + thread_idx.x
-    # FILL ME IN (roughly 6 lines)
+    if row >= size or col >= size:
+        return
+
+    var s: output.element_type = 0
+    for i in range(size):
+        s += a[row, i] * b[i, col]
+
+    output[row, col] = s
 
 
 # ANCHOR_END: naive_matmul
@@ -43,7 +50,21 @@ fn single_block_matmul[
     col = block_dim.x * block_idx.x + thread_idx.x
     local_row = thread_idx.y
     local_col = thread_idx.x
-    # FILL ME IN (roughly 12 lines)
+
+    if row >= size or col >= size:
+        return
+    shared_a = tb[dtype]().row_major[TPB, TPB]().shared().alloc()
+    shared_b = tb[dtype]().row_major[TPB, TPB]().shared().alloc()
+    shared_a[local_row, local_col] = a[row, col]
+    shared_b[local_row, local_col] = b[row, col]
+
+    barrier()
+
+    var s: output.element_type = 0
+    for i in range(size):
+        s += shared_a[local_row, i] * shared_b[i, local_col]
+
+    output[row, col] = s
 
 
 # ANCHOR_END: single_block_matmul
@@ -53,6 +74,9 @@ alias SIZE_TILED = 9
 alias BLOCKS_PER_GRID_TILED = (3, 3)  # each block convers 3x3 elements
 alias THREADS_PER_BLOCK_TILED = (TPB, TPB)
 alias layout_tiled = Layout.row_major(SIZE_TILED, SIZE_TILED)
+
+from gpu.memory import async_copy_wait_all
+from layout.layout_tensor import copy_dram_to_sram_async
 
 
 fn matmul_tiled[
@@ -66,7 +90,32 @@ fn matmul_tiled[
     local_col = thread_idx.x
     tiled_row = block_idx.y * TPB + thread_idx.y
     tiled_col = block_idx.x * TPB + thread_idx.x
-    # FILL ME IN (roughly 20 lines)
+
+    out_tile = output.tile[TPB, TPB](block_idx.y, block_idx.x)
+    a_shared = tb[dtype]().row_major[TPB, TPB]().shared().alloc().fill(0)
+    b_shared = tb[dtype]().row_major[TPB, TPB]().shared().alloc().fill(0)
+
+    var s: output.element_type = 0
+    for idx in range(size // TPB):
+        a_tile = a.tile[TPB, TPB](block_idx.y, idx)
+        b_tile = b.tile[TPB, TPB](idx, block_idx.x)
+
+        copy_dram_to_sram_async[thread_layout = Layout.row_major(1, TPB)](
+            a_shared, a_tile
+        )
+        copy_dram_to_sram_async[thread_layout = Layout.row_major(TPB, 1)](
+            b_shared, b_tile
+        )
+        async_copy_wait_all()
+        barrier()
+
+        for k in range(TPB):
+            s += a_shared[local_row, k] * b_shared[k, local_col]
+
+        barrier()
+
+    if tiled_row < size and tiled_col < size:
+        out_tile[local_row, local_col] = s
 
 
 # ANCHOR_END: matmul_tiled
