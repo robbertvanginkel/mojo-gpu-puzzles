@@ -20,13 +20,28 @@ alias conv_layout = Layout.row_major(CONV)
 fn conv_1d_simple[
     in_layout: Layout, out_layout: Layout, conv_layout: Layout
 ](
-    output: LayoutTensor[mut=False, dtype, out_layout],
+    output: LayoutTensor[mut=True, dtype, out_layout],
     a: LayoutTensor[mut=False, dtype, in_layout],
     b: LayoutTensor[mut=False, dtype, conv_layout],
 ):
     global_i = block_dim.x * block_idx.x + thread_idx.x
     local_i = thread_idx.x
-    # FILL ME IN (roughly 14 lines)
+    shared_a = tb[dtype]().row_major[SIZE]().shared().alloc()
+    shared_b = tb[dtype]().row_major[CONV]().shared().alloc()
+
+    if global_i < SIZE:
+        shared_a[local_i] = a[global_i]
+    if local_i < CONV:
+        shared_b[local_i] = b[local_i]
+
+    barrier()
+
+    if global_i < SIZE:
+        var s: output.element_type = 0
+        for j in range(CONV):
+            if global_i + j < SIZE:
+                s += shared_a[global_i + j] * b[j]
+        output[global_i] = s
 
 
 # ANCHOR_END: conv_1d_simple
@@ -44,13 +59,30 @@ alias conv_2_layout = Layout.row_major(CONV_2)
 fn conv_1d_block_boundary[
     in_layout: Layout, out_layout: Layout, conv_layout: Layout, dtype: DType
 ](
-    output: LayoutTensor[mut=False, dtype, out_layout],
+    output: LayoutTensor[mut=True, dtype, out_layout],
     a: LayoutTensor[mut=False, dtype, in_layout],
     b: LayoutTensor[mut=False, dtype, conv_layout],
 ):
     global_i = block_dim.x * block_idx.x + thread_idx.x
     local_i = thread_idx.x
-    # FILL ME IN (roughly 18 lines)
+    shared_a = tb[dtype]().row_major[TPB + CONV_2 - 1]().shared().alloc()
+    shared_b = tb[dtype]().row_major[CONV_2]().shared().alloc()
+
+    if global_i < SIZE_2:
+        shared_a[local_i] = a[global_i]
+    if local_i < CONV_2 - 1:
+        shared_a[local_i + TPB] = a[global_i + TPB] if global_i + TPB < SIZE_2 else 0
+    if local_i < CONV_2:
+        shared_b[local_i] = b[local_i]
+
+    barrier()
+
+    if global_i < SIZE_2:
+        var s: output.element_type = 0
+        for j in range(CONV_2):
+            if global_i + j < SIZE_2:
+                s += shared_a[local_i + j] * shared_b[j]
+        output[global_i] = s
 
 
 # ANCHOR_END: conv_1d_block_boundary

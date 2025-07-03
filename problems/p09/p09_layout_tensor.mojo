@@ -31,12 +31,10 @@ fn pooling[
 
     barrier()
 
-    if global_i == 0:
-        output[global_i] = shared[0]
-    elif global_i == 1:
-        output[global_i] = shared[0] + shared[1]
-    elif global_i < size:
-        output[global_i] = shared[local_i] + shared[local_i - 1] + shared[local_i - 2]
+    var s: output.element_type = 0
+    for i in range(max(local_i - 2, 0) if local_i > 2 else 0, local_i + 1):
+        s += shared[i]
+    output[global_i] = s
 
 
 
