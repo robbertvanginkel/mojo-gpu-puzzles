@@ -18,7 +18,7 @@ fn add_10_shared_layout_tensor[
     layout: Layout
 ](
     output: LayoutTensor[mut=True, dtype, layout],
-    a: LayoutTensor[mut=True, dtype, layout],
+    a: LayoutTensor[mut=False, dtype, layout],
     size: Int,
 ):
     # Allocate shared memory using tensor builder
@@ -32,7 +32,8 @@ fn add_10_shared_layout_tensor[
 
     barrier()
 
-    # FILL ME IN (roughly 2 lines)
+    if global_i < size:
+        output[global_i] = shared[local_i] + 10.0
 
 
 # ANCHOR_END: add_10_shared_layout_tensor
