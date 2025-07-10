@@ -21,8 +21,8 @@ fn embedding_kernel_coalesced[
     dtype: DType = DType.float32,
 ](
     output: LayoutTensor[mut=True, dtype, out_layout],
-    indices: LayoutTensor[mut=True, DType.int32, indices_layout],
-    weights: LayoutTensor[mut=True, dtype, weights_layout],
+    indices: LayoutTensor[mut=False, DType.int32, indices_layout],
+    weights: LayoutTensor[mut=False, dtype, weights_layout],
 ):
     """
     Memory-coalescing focused embedding kernel.
@@ -41,13 +41,20 @@ fn embedding_kernel_coalesced[
         return
 
     # Convert to (batch, seq, embed) coordinates
-    # FILL IN roughly 4 lines
+    batch_idx = global_idx // (seq_len * embed_dim)
+    seq_idx = global_idx % (seq_len * embed_dim) // embed_dim
+    embed_idx = global_idx % (seq_len * embed_dim) % embed_dim
 
     # Get token index
-    # FILL IN 1 line
+    token_idx = Int(indices[batch_idx, seq_idx])
 
     # Simple, correct assignment
-    # FILL IN 4 lines
+    if token_idx >= 0 and token_idx < vocab_size:
+        output[batch_idx, seq_idx, embed_idx] = weights[
+            token_idx, embed_idx
+        ]
+    else:
+        output[batch_idx, seq_idx, embed_idx] = 0
 
 
 # ANCHOR_END: embedding_kernel_coalesced
@@ -86,13 +93,19 @@ fn embedding_kernel_2d[
         return
 
     # Convert to (batch, seq) coordinates
-    # FILL IN 2 lines
+    batch_idx = batch_seq_idx // seq_len
+    seq_idx = batch_seq_idx % seq_len
 
     # Get token index
-    # FILL IN 1 line
+    token_idx = Int(indices[batch_idx, seq_idx])
 
     # Assignment with 2D grid pattern
-    # FILL IN 4 lines
+    if token_idx >= 0 and token_idx < vocab_size:
+        output[batch_idx, seq_idx, embed_idx] = weights[
+            token_idx, embed_idx
+        ]
+    else:
+        output[batch_idx, seq_idx, embed_idx] = 0
 
 
 # ANCHOR_END: embedding_kernel_2d
