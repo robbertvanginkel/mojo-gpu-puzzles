@@ -24,8 +24,44 @@ fn softmax_gpu_kernel[
     output: LayoutTensor[mut=True, dtype, layout],
     input: LayoutTensor[mut=False, dtype, layout],
 ):
-    # FILL IN (roughly 31 lines)
-    ...
+    global_i = block_dim.x * block_idx.x + thread_idx.x
+    local_i = thread_idx.x
+    reduce = tb[dtype]().row_major[SIZE]().shared().alloc()
+    if global_i < SIZE:
+        shared[local_i] = input[local_i]
+        reduce[local_i] = input[local_i]
+    barrier()
+    stride = TPB // 2
+    while stride > 0:
+        var s: output.element_type = 0
+        if local_i < stride:
+            s = reduce[local_i + stride]
+        barrier()
+        if local_i < stride:
+            reduce[local_i] = max(s, reduce[local_i])
+        barrier()
+        stride //= 2
+
+    shared = tb[dtype]().row_major[SIZE]().shared().alloc()
+    var max_val: output.element_type = reduce[0] 
+    if global_i < SIZE:
+        exp = exp(shared[local_i] - max_val)
+        shared[local_i] = exp
+        reduce[local_i] = exp
+    barrier()
+    stride = TPB // 2
+    while stride > 0:
+        var s: output.element_type = 0
+        if local_i < stride:
+            s = reduce[local_i + stride]
+        barrier()
+        if local_i < stride:
+            reduce[local_i] += s
+        barrier()
+        stride //= 2
+    var sum_exp: output.element_type = reduce[0]  
+    if global_i < SIZE:
+        output[global_i] = shared[local_i] / sum_exp
 
 
 # ANCHOR_END: softmax_gpu_kernel
