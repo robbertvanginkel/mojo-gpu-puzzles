@@ -98,10 +98,23 @@ fn layernorm_kernel[
         return
 
     # Compute statistics for this sequence position (redundant but simple)
-    var sum_val: Scalar[dtype] = 0
-    var sq_sum: Scalar[dtype] = 0
+    var sum_val: input.element_type = 0
+    var sq_sum: input.element_type = 0
 
-    # FILL ME IN (roughly 11 lines)
+    @parameter
+    for h in range(hidden_dim):
+        var x: input.element_type = input[batch_idx, seq_idx, h]
+        sum_val += x
+        sq_sum += x * x
+
+    mean = sum_val / hidden_dim
+    variance = (sq_sum / hidden_dim) - (mean * mean)
+    normalized = 
+        (input[batch_idx, seq_idx, hidden_idx] - mean) 
+        * (1.0 / sqrt(variance + 1e-5))
+        * ln_weight[hidden_idx]
+        + ln_bias[hidden_idx]
+    output[batch_idx, seq_idx, hidden_idx] = normalized
 
 
 # ANCHOR_END: layernorm_kernel
@@ -206,12 +219,29 @@ fn minimal_fused_kernel[
         return
 
     # Step 1: Compute LayerNorm statistics once per sequence position
+    var sum_val: input.element_type = 0
+    var sq_sum: input.element_type = 0
 
-    # FILL IN roughly 10 lines
+    @parameter
+    for h in range(hidden_dim):
+        var x: input.element_type = input[batch_idx, seq_idx, h]
+        sum_val += x
+        sq_sum += x * x
+
+    mean = sum_val / hidden_dim
+    variance = (sq_sum / hidden_dim) - (mean * mean)
+    iverse_std = 1.0 / sqrt(variance + 1e-5)
 
     # Step 2: Compute all outputs for this sequence position
-
-    # FILL IN roughly 10 lines
+    @parameter
+    for out_idx in range(output_dim):
+        var acc: output.element_type = 0
+        @parameter
+        for h in range(hidden_dim):
+            input_val = input[batch_idx, seq_idx, h]
+            normalized = (input_val - mean) * iverse_std * ln_weight[h] + ln_bias[h]
+            acc += normalized * linear_weight[out_idx, h]
+        output[batch_idx, seq_idx, out_idx] = acc + linear_bias[out_idx]
 
 
 # ANCHOR_END: minimal_fused_forward_kernel
