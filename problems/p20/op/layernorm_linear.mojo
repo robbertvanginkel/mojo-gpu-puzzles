@@ -109,8 +109,8 @@ fn layernorm_kernel[
 
     mean = sum_val / hidden_dim
     variance = (sq_sum / hidden_dim) - (mean * mean)
-    normalized = 
-        (input[batch_idx, seq_idx, hidden_idx] - mean) 
+    normalized =
+        (input[batch_idx, seq_idx, hidden_idx] - mean)
         * (1.0 / sqrt(variance + 1e-5))
         * ln_weight[hidden_idx]
         + ln_bias[hidden_idx]
@@ -285,33 +285,98 @@ fn minimal_fused_kernel_backward[
         return
 
     # Step 1: Recompute forward pass statistics (needed for gradients)
-    var sum_val: Scalar[dtype] = 0
-    var sq_sum: Scalar[dtype] = 0
+    var sum_val: input.element_type = 0
+    var sq_sum: input.element_type = 0
 
-    # FILL IN roughly 8 lines
+    @parameter
+    for h in range(hidden_dim):
+        var x: input.element_type = input[batch_idx, seq_idx, h]
+        sum_val += x
+        sq_sum += x * x
+
+    mean = sum_val / hidden_dim
+    variance = (sq_sum / hidden_dim) - (mean * mean)
+    inverse_std = 1.0 / sqrt(variance + 1e-5)
 
     # Step 2: Atomically accumulate gradients w.r.t. linear bias
-
-    # FILL IN roughly 4 lines
+    @parameter
+    for out_idx in range(output_dim):
+        _ = Atomic[dtype].fetch_add(
+            grad_bias.ptr.offset(out_idx),
+            rebind[Scalar[dtype]](grad_output[batch_idx, seq_idx, out_idx]),
+        )
 
     # Step 3: Atomically accumulate gradients w.r.t. linear weight
-    # Make sure to use the correct atomic operation to avoid race conditions
-
-    # FILL IN roughly 10 lines
+    @parameter
+    for out_idx in range(output_dim):
+        @parameter
+        for h in range(hidden_dim):
+            var input_val = input[batch_idx, seq_idx, h]
+            var normalized = (input_val - mean) * inverse_std
+            var ln_output_val = (
+                normalized * ln_weight[h]
+                + ln_bias[h]
+            )
+            var grad_w = (
+                grad_output[batch_idx, seq_idx, out_idx] * ln_output_val
+            )
+            var grad_weight_ptr = grad_weight.ptr.offset(
+                out_idx * hidden_dim + h
+            )
+            _ = Atomic.fetch_add(grad_weight_ptr, rebind[Scalar[dtype]](grad_w))
 
     # Step 4: Atomically accumulate gradients w.r.t. LayerNorm parameters
+    @parameter
+    for h in range(hidden_dim):
+        input_val = input[batch_idx, seq_idx, h]
+        normalized = (input_val - mean) * inverse_std
 
-    # FILL IN roughly 10 lines
+        var grad_ln_out: grad_ln_weight.element_type = 0
+        @parameter
+        for out_idx in range(output_dim):
+            grad_ln_out += grad_output[batch_idx, seq_idx, out_idx] * linear_weight[out_idx, h]
+
+        _ = Atomic[dtype].fetch_add(
+            grad_ln_weight.ptr.offset(h), rebind[Scalar[dtype]](grad_ln_out * normalized)
+        )
+        _ = Atomic[dtype].fetch_add(
+            grad_ln_bias.ptr.offset(h), rebind[Scalar[dtype]](grad_ln_out)
+        )
 
     # Step 5: Compute gradients w.r.t. input (LayerNorm backward)
-    # Compute sum terms needed for LayerNorm backward
-    # Make sure to use the correct atomic operation to avoid race conditions
+    var sum_grad_normalized: ln_weight.element_type = 0
+    var sum_grad_normalized_times_normalized: ln_weight.element_type = 0
 
-    # FILL IN roughly 12 lines
+    @parameter
+    for h in range(hidden_dim):
+        input_val = input[batch_idx, seq_idx, h]
+        normalized = (input_val - mean) * inverse_std
+
+        var grad_ln_out: ln_weight.element_type = 0
+        @parameter
+        for out_idx in range(output_dim):
+            grad_ln_out += grad_output[batch_idx, seq_idx, out_idx] * linear_weight[out_idx, h]
+
+        grad_norm = grad_ln_out * ln_weight[h]
+        sum_grad_normalized += grad_norm
+        sum_grad_normalized_times_normalized += grad_norm * normalized
 
     # Compute actual input gradients (no race conditions here - each thread writes to different positions)
+    @parameter
+    for h in range(hidden_dim):
+        input_val = input[batch_idx, seq_idx, h]
+        normalized = (input_val - mean) * inverse_std
+        var grad_ln_out: ln_weight.element_type = 0
+        @parameter
+        for out_idx in range(output_dim):
+            grad_ln_out += grad_output[batch_idx, seq_idx, out_idx] * linear_weight[out_idx, h]
 
-    # FILL IN roughly 10 lines
+        grad_norm = grad_ln_out * ln_weight[h]
+        grad_input[batch_idx, seq_idx, h] = inverse_std * (
+            grad_norm
+            - (sum_grad_normalized / hidden_dim)
+            - (normalized * sum_grad_normalized_times_normalized / hidden_dim)
+        )
 
 
 # ANCHOR_END: minimal_fused_backward_kernel
