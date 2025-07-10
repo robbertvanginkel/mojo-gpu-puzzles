@@ -1,0 +1,6 @@
+[tools]
+uv = "latest"
+
+[env]
+EDITOR="vim"
+
