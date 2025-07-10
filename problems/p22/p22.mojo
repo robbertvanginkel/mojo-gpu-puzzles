@@ -76,7 +76,11 @@ fn simple_warp_dot_product[
     b: LayoutTensor[mut=False, dtype, in_layout],
 ):
     global_i = block_dim.x * block_idx.x + thread_idx.x
-    # FILL IN (6 lines at most)
+    if global_i < size:
+        return
+    s = warp_sum(a[global_i] * b[global_i])
+    if lane_id() == 0:
+        output[0] = s
 
 
 # ANCHOR_END: simple_warp_kernel
@@ -99,8 +103,18 @@ fn functional_warp_dot_product[
         simd_width: Int, rank: Int
     ](indices: IndexList[rank]) capturing -> None:
         idx = indices[0]
-        print("idx:", idx)
-        # FILL IN (10 lines at most)
+        var partial_product: Scalar[dtype] = 0.0
+        if idx < size:
+            a_val = a.load[1](idx, 0)
+            b_val = b.load[1](idx, 0)
+            partial_product = (a_val * b_val).reduce_add()
+        else:
+            partial_product = 0.0
+
+        s = warp_sum(partial_product)
+        
+        if lane_id() == 0:
+            output.store[1](0, 0, s)
 
     # Launch exactly WARP_SIZE threads (one warp) to process all elements
     elementwise[compute_dot_product, 1, target="gpu"](WARP_SIZE, ctx)
