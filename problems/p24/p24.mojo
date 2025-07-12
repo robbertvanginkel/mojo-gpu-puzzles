@@ -27,7 +27,8 @@ fn butterfly_pair_swap[
     """
     global_i = block_dim.x * block_idx.x + thread_idx.x
 
-    # FILL ME IN (4 lines)
+    if global_i < size:
+        output[global_i] = shuffle_xor(input[global_i], 1)
 
 
 # ANCHOR_END: butterfly_pair_swap
@@ -49,7 +50,17 @@ fn butterfly_parallel_max[
     """
     global_i = block_dim.x * block_idx.x + thread_idx.x
 
-    # FILL ME IN (roughly 7 lines)
+    if global_i < size:
+        max_val = input[global_i]
+
+        offset = WARP_SIZE // 2
+        while offset > 0:
+            other_val = shuffle_xor(max_val, offset)
+            if other_val > max_val:
+                max_val = other_val
+            offset //= 2
+
+        output[global_i] = max_val
 
 
 # ANCHOR_END: butterfly_parallel_max
@@ -75,12 +86,26 @@ fn butterfly_conditional_max[
     """
     global_i = block_dim.x * block_idx.x + thread_idx.x
     lane = lane_id()
-
+    print("global_i:", global_i, input[global_i], "lane:", lane, block_idx.x, block_dim.x)
     if global_i < size:
         current_val = input[global_i]
         min_val = current_val
+        max_val = current_val
 
-        # FILL ME IN (roughly 11 lines)
+        offset = WARP_SIZE // 2
+        while offset > 0:
+            neighbor_max = shuffle_xor(max_val, offset)
+            max_val = max(max_val, neighbor_max)
+
+            neighbor_min = shuffle_xor(min_val, offset)
+            min_val = min(min_val, neighbor_min)
+            offset //= 2
+
+
+        if lane % 2 == 0:
+            output[global_i] = max_val
+        else:
+            output[global_i] = min_val
 
 
 # ANCHOR_END: butterfly_conditional_max
@@ -114,7 +139,13 @@ fn warp_inclusive_prefix_sum[
     """
     global_i = block_dim.x * block_idx.x + thread_idx.x
 
-    # FILL ME IN (roughly 4 lines)
+    if global_i < size:
+        # Use prefix_sum to compute inclusive scan
+        # Each thread gets sum of all elements up to and including its position
+        output[global_i] = prefix_sum(input[global_i].reduce_add())
+
+        # Note: This is an inclusive scan, so output[0] = input[0],
+        # output[1] = input[0] + input[1], etc.
 
 
 # ANCHOR_END: warp_inclusive_prefix_sum
@@ -147,9 +178,23 @@ fn warp_partition[
     global_i = block_dim.x * block_idx.x + thread_idx.x
 
     if global_i < size:
-        current_val = input[global_i]
+        current_val = rebind[Scalar[dtype]](input[global_i])
+        lower_pos = prefix_sum[exclusive=True](
+            (current_val < pivot).cast[DType.int32]()
+        )
+        higher_pos = prefix_sum[exclusive=True](
+            (current_val >= pivot).cast[DType.int32]()
+        )
+        lower_count = (current_val < pivot).cast[DType.int32]()
+        offset = WARP_SIZE // 2
+        while offset > 0:
+            lower_count += shuffle_xor(lower_count, offset)
+            offset //= 2
 
-        # FILL ME IN (roughly 13 lines)
+        if current_val < pivot:
+            output[Int(lower_pos)] = current_val
+        else:
+            output[Int(lower_count + higher_pos)] = current_val
 
 
 # ANCHOR_END: warp_partition
