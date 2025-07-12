@@ -27,7 +27,13 @@ fn neighbor_difference[
     global_i = block_dim.x * block_idx.x + thread_idx.x
     lane = lane_id()
 
-    # FILL IN (roughly 7 lines)
+    if global_i < size:
+        current_input = input[global_i]
+        next_input = shuffle_down(current_input, 1)
+        if lane < WARP_SIZE - 1:
+            output[global_i] = next_input - current_input
+        else:
+            output[global_i] = 0.0
 
 
 # ANCHOR_END: neighbor_difference
@@ -53,7 +59,18 @@ fn moving_average_3[
     global_i = block_dim.x * block_idx.x + thread_idx.x
     lane = lane_id()
 
-    # FILL IN (roughly 10 lines)
+    if global_i < size:
+        current_input = input[global_i]
+        next_input = shuffle_down(current_input, 1)
+        next_next_input = shuffle_down(current_input, 2)
+        if lane < WARP_SIZE - 2:
+            output[global_i] = (
+                current_input + next_input + next_next_input
+            ) / 3
+        elif lane < WARP_SIZE - 1:
+            output[global_i] = (current_input + next_input) / 2
+        else:
+            output[global_i] = current_input
 
 
 # ANCHOR_END: moving_average_3
@@ -76,7 +93,24 @@ fn broadcast_shuffle_coordination[
     if global_i < size:
         var scale_factor: output.element_type = 0.0
 
-        # FILL IN (roughly 14 lines)
+        if lane == 0:
+            # Compute scale factor from first 4 elements in block
+            var denominator: output.element_type = 0.0
+            @parameter
+            for i in range(4):
+                if global_i + i < size:
+                    scale_factor += input[global_i + i]
+                    denominator += 1.0
+            scale_factor /= denominator if denominator > 0 else 1.0
+        # Broadcast scale factor to all lanes
+        scale_factor = broadcast(scale_factor)
+
+        current_input = input[global_i]
+        next_input = shuffle_down(current_input, 1)
+        if lane < WARP_SIZE - 1:
+            output[global_i] = (current_input + next_input) * scale_factor
+        else:
+            output[global_i] = current_input * scale_factor
 
 
 # ANCHOR_END: broadcast_shuffle_coordination
@@ -98,7 +132,13 @@ fn basic_broadcast[
     if global_i < size:
         var broadcast_value: output.element_type = 0.0
 
-        # FILL IN (roughly 10 lines)
+        if lane == 0:
+            @parameter
+            for i in range(4):
+                if global_i + i < size:
+                    broadcast_value += input[global_i + i]
+        b = broadcast(broadcast_value)
+        output[global_i] = b + input[global_i]
 
 
 # ANCHOR_END: basic_broadcast
@@ -119,8 +159,12 @@ fn conditional_broadcast[
     lane = lane_id()
     if global_i < size:
         var decision_value: output.element_type = 0.0
-
-        # FILL IN (roughly 10 lines)
+        if lane == 0:
+            @parameter
+            for i in range(8):
+                if global_i + i < size:
+                    decision_value = max(input[global_i + i], decision_value)
+        decision_value = broadcast(decision_value)
 
         current_input = input[global_i]
         threshold = decision_value / 2.0
